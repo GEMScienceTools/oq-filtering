@@ -34,8 +34,8 @@ from openquake.commonlib import logs
 from openquake.commonlib import source
 
 
-gmf_file = './GMF_complete_IM0.1+MaxDist_10km_60arcsec.csv'
-gmf_file_gmpe_rate = './GMF_complete_IM0.1+MaxDist_10km_60arcsec_gmpe_rate.csv'
+gmf_file = './gmf_complete.csv'
+gmf_file_gmpe_rate = './gmf_complete_rate.csv'
 
 df_gmf = pd.read_csv(gmf_file, header=0)
 df_gmf_gmpe_rate = pd.read_csv(gmf_file_gmpe_rate, header=0)
@@ -156,7 +156,7 @@ sigma = 1.0
 # ### Intra-event residuals: Spatial and Cross Correlation
 
 intra_matrices_file = (
-    './Matrix_Intra_Res_SJ_60arcsec_10k_seed1_trunc3_withfilter_')
+    './intra_res_sanjose_seed1_withfilter_')
 
 df_0 = pd.read_csv(
     intra_matrices_file + str(imts[0]) + '.csv', nrows=2, header=None)
@@ -210,7 +210,6 @@ for gmpe, imt in gmpe_imt:
 
 # Sum median with residuals and save .csv file - For ruptures after filtering
 
-csv_gmf_file = './GMF_results_seed1.csv'
 csv_rate_gmf_file = './GMF_results_seed1_rate.csv'
 seed = 1
 
