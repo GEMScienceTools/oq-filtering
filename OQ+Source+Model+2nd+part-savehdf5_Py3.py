@@ -315,7 +315,7 @@ ds
 
 from openquake.commonlib import logs
 
-logs.dbcmd('import_job', 1234, 'event_based',
+logs.dbcmd('import_job', last_id, 'event_based',
                'eb_test_hdf5', 'ccosta', 'complete', 
                None, ds)
 
