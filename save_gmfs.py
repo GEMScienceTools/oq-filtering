@@ -83,8 +83,6 @@ for gsim in gsim_list:
     dctx = DistancesContext()
     dctx.rjb = np.copy(np.array([1]))  # I do not care about the distance
     dctx.rrup = np.copy(np.array([1]))  # I do not care about the distance
-    # dctx.rhypo = np.copy(np.array([0]))
-
     sctx = SitesContext()
     sctx.vs30 = vs30 * np.ones_like(np.array([0]))
     for imt in imts:
