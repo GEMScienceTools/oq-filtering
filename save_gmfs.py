@@ -31,21 +31,17 @@ from openquake.commonlib.readinput import (
     get_sitecol_assetcol)
 from openquake.hazardlib import const
 from openquake.commonlib import logs
-
-from openquake.baselib import hdf5
 from openquake.commonlib import source
 
 
 gmf_file = './GMF_complete_IM0.1+MaxDist_10km_60arcsec.csv'
 gmf_file_gmpe_rate = './GMF_complete_IM0.1+MaxDist_10km_60arcsec_gmpe_rate.csv'
 
-
 df_gmf = pd.read_csv(gmf_file, header=0)
 df_gmf_gmpe_rate = pd.read_csv(gmf_file_gmpe_rate, header=0)
 
 
 gmfs_median = []
-
 for event in range(len(df_gmf_gmpe_rate)):
     gmf_median = {}  # gmpe -> [gmv_PGA, gmv_SA(0.3)]
     gmf_median['rate'] = df_gmf_gmpe_rate['rate'][event]
@@ -68,13 +64,11 @@ oq_param = get_oqparam("./job_eb_cr_60_SJ2.ini")
 
 exposure = get_exposure(oq_param)
 
-# added this line
 haz_sitecol = get_site_collection(oq_param)
 sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
 gsimlt = get_gsim_lt(oq_param)
 gsim_list = [br.uncertainty for br in gsimlt.branches]
 
-# stddevs = [const.StdDev.TOTAL]
 std_total = {}
 std_inter = {}
 std_intra = {}
@@ -87,10 +81,8 @@ for gsim in gsim_list:
     rctx.hypo_depth = 0
 
     dctx = DistancesContext()
-    dctx.rjb = np.copy(np.array([0]))
-    dctx.rrup = np.copy(np.array([0]))
-    # dctx.rhypo = np.copy(np.array([0]))
-
+    dctx.rjb = np.copy(np.array([1]))  # I do not care about the distance
+    dctx.rrup = np.copy(np.array([1]))  # I do not care about the distance
     sctx = SitesContext()
     sctx.vs30 = vs30 * np.ones_like(np.array([0]))
     for imt in imts:
@@ -103,14 +95,9 @@ for gsim in gsim_list:
         std_inter[gsim, imt] = gm_stddev_inter[0]
         std_intra[gsim, imt] = gm_stddev_intra[0]
 
-
 # ## Inter-event residuals
 
 realizations_inter = 5
-
-
-# In[10]:
-
 
 # Importance Sampling
 mean_shift = 0.75
@@ -198,30 +185,25 @@ intra_residual['rates_intra'] = rates_intra
 cols = np.array(range(2, number_cols))
 # intra_residual['rates_intra']
 
-
 intra_residual_no_coords = {}
 
 df_coords = pd.DataFrame({'lons': sites.lons, 'lats': sites.lats})
 
-for x in range(len(gmpe_imt)):
-    IMT = str(gmpe_imt[x][1])
-
-    file_name = intra_matrices_file+str(IMT)+'.csv'
+for gmpe, imt in gmpe_imt:
+    file_name = intra_matrices_file + str(imt) + '.csv'
     df = pd.read_csv(file_name, usecols=cols, header=None)
     df_part = df.loc[rows_to_extract].reset_index(drop=True)
 
     # get std_intra values from gmpe
-    stddev_intra = [std_intra[gmpe_imt[x]]]
+    stddev_intra = [std_intra[gmpe, imt]]
     intra_residual_no_coords[
-        str(gmpe_imt[x][0]) + ', ' + str(gmpe_imt[x][1])] = (
-            stddev_intra * df_part.values)
+        str(gmpe) + ', ' + str(imt)] = stddev_intra * df_part.values
 
     intra_residual[
-        str(gmpe_imt[x][0]) + ', ' + str(gmpe_imt[x][1])] = (
+        str(gmpe) + ', ' + str(imt)] = (
             np.concatenate(
                 [df_coords.values,
-                 intra_residual_no_coords[str(gmpe_imt[x][0]) +
-                                          ', ' + str(gmpe_imt[x][1])]],
+                 intra_residual_no_coords[str(gmpe) + ', ' + str(imt)]],
                 axis=1))
 
 # intra_residual
@@ -247,21 +229,20 @@ lst_ = []
 for sid in range(N):
     list_a = []
     for eid in range(int(num_gmfs)):
-        list_a.append((sid+eid*N, sid+eid*N + 1))
+        list_a.append((sid + eid * N, sid + eid * N + 1))
     a = np.array(list_a, np.dtype([('start', U32), ('stop', U32)]))
     lst_.append(a)
-lst = np.array(lst_)
+data = np.array(lst_)
 
 parent_hdf5 = f = hdf5new()
 calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
 logs.dbcmd('import_job', calc_id, 'event_based',
            'eb_test_hdf5', 'ccosta', 'complete', None, datadir)
 
-data = lst
 dt = data[0].dtype
 dtype = h5py.special_dtype(vlen=dt)
 dset = f.create_dataset('gmf_data/indices', (len(sites),), dtype)
-for i, val in enumerate(lst):
+for i, val in enumerate(data):
     dset[i] = val
 
 gmdata_dt = np.dtype(
