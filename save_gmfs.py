@@ -15,8 +15,8 @@
 
 #  You should have received a copy of the GNU Affero General Public License
 #  along with OpenQuake.  If not, see <http://www.gnu.org/licenses/>.
-import sys
 import csv
+import configparser
 import pandas as pd
 import numpy as np
 import scipy
@@ -24,6 +24,7 @@ from scipy.spatial.distance import cdist
 import h5py
 
 from openquake.baselib.datastore import hdf5new, extract_calc_id_datadir
+from openquake.baselib import sap
 from openquake.hazardlib.imt import PGA, SA
 from openquake.hazardlib.gsim.base import (
     RuptureContext, SitesContext, DistancesContext)
@@ -40,10 +41,13 @@ U64 = np.uint64
 F32 = np.float32
 
 
+@sap.Script
 def main(cfg_file):
-
-    gmf_file = './gmf_complete.csv'
-    gmf_file_gmpe_rate = './gmf_complete_rate.csv'
+    cfg = configparser.ConfigParser()
+    cfg.read(cfg_file)
+    gmf_file = cfg['input']['gmf_file']
+    gmf_file_gmpe_rate = cfg['input']['gmf_file_gmpe_rate']
+    job_ini = cfg['input']['job_ini']
 
     df_gmf = pd.read_csv(gmf_file, header=0)
     df_gmf_gmpe_rate = pd.read_csv(gmf_file_gmpe_rate, header=0)
@@ -65,7 +69,7 @@ def main(cfg_file):
     # These values are used only if the GMPE is defined for TOTAL st dev
     vs30 = 180
 
-    oq_param = get_oqparam("./job_eb_cr_60_SJ2.ini")
+    oq_param = get_oqparam(job_ini)
 
     haz_sitecol = get_site_collection(oq_param)
     sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
@@ -116,17 +120,16 @@ def main(cfg_file):
     rates_inter = weights / sum(weights)
 
     # Calculate distribution mean - needs to be approximately zero
-    np.mean(distr_values*rates_inter)
+    np.mean(distr_values * rates_inter)
 
     # get std_inter values from gmpe
     gmpe_imt = list(std_inter)
     inter_residual = {}
 
     # calculate inter_residual values
-    for i in range(len(gmpe_imt)):
-        stddev_inter = [std_inter[gmpe_imt[i]]]
-        inter_residual[str(gmpe_imt[i][0]) + ', ' + str(gmpe_imt[i][1])] = (
-            stddev_inter * distr_values)
+    for gmpe, imt in gmpe_imt:
+        stddev_inter = [std_inter[gmpe, imt]]
+        inter_residual[gmpe, imt] = stddev_inter * distr_values
 
     inter_residual['rates_inter'] = rates_inter
 
@@ -157,17 +160,13 @@ def main(cfg_file):
 
     # ### Intra-event residuals: Spatial and Cross Correlation
 
-    intra_matrices_file = (
-        './intra_res_sanjose_seed1_withfilter_')
+    intra_files = cfg['input']['intra_files'].split()
 
-    df_0 = pd.read_csv(
-        intra_matrices_file + str(imts[0]) + '.csv', nrows=2, header=None)
+    df_0 = pd.read_csv(intra_files[0], nrows=2, header=None)
     number_cols = len(df_0.columns)
 
     # Find indeces of rows to extract from Matrices
-    df = pd.read_csv(
-        intra_matrices_file + str(imts[0]) + '.csv', usecols=[0, 1],
-        header=None)
+    df = pd.read_csv(intra_files[0], usecols=[0, 1], header=None)
 
     coords_matrix = np.array(df)
     exposure_coords = np.array(list(zip(*[sites.lons, sites.lats])))
@@ -179,7 +178,7 @@ def main(cfg_file):
 
     intra_residual = {}
     # If rates are all equal
-    rates_intra = [1./realizations_intra]*realizations_intra
+    rates_intra = [1. / realizations_intra] * realizations_intra
     intra_residual['rates_intra'] = rates_intra
 
     # np.random.seed(99)
@@ -191,30 +190,24 @@ def main(cfg_file):
     intra_residual_no_coords = {}
 
     df_coords = pd.DataFrame({'lons': sites.lons, 'lats': sites.lats})
-
-    for gmpe, imt in gmpe_imt:
-        file_name = intra_matrices_file + str(imt) + '.csv'
+    for (gmpe, imt), file_name in zip(gmpe_imt, intra_files):
         df = pd.read_csv(file_name, usecols=cols, header=None)
         df_part = df.loc[rows_to_extract].reset_index(drop=True)
 
         # get std_intra values from gmpe
         stddev_intra = [std_intra[gmpe, imt]]
-        intra_residual_no_coords[
-            str(gmpe) + ', ' + str(imt)] = stddev_intra * df_part.values
+        intra_residual_no_coords[gmpe, imt] = stddev_intra * df_part.values
 
-        intra_residual[
-            str(gmpe) + ', ' + str(imt)] = (
+        intra_residual[gmpe, imt] = (
                 np.concatenate(
                     [df_coords.values,
-                     intra_residual_no_coords[str(gmpe) + ', ' + str(imt)]],
-                    axis=1))
+                     intra_residual_no_coords[gmpe, imt]], axis=1))
 
     # intra_residual
 
     # Sum median with residuals and save .csv file
     # For ruptures after filtering
-
-    csv_rate_gmf_file = './GMF_results_seed1_rate.csv'
+    csv_rate_gmf_file = cfg['output']['csv_rate_gmf_file']
     seed = 1
 
     N = len(sites)
@@ -272,15 +265,16 @@ def main(cfg_file):
     num_intra_matrices = len(df_0.columns)-2
 
     zip_intra = {}
-    for al in range(len(gsim_list)):
-        for c in range(len(imts)):
-            zip_intra[str(gsim_list[al]) + ', ' + str(imts[c])] = (
-                list(zip(*intra_residual[str(gsim_list[al]) +
-                                         ', ' + str(imts[c])])))
+    for gsim in gsim_list:
+        for imt in imts:
+            try:
+                zip_intra[gsim, imt] = list(zip(*intra_residual[gsim, imt]))
+            except Exception:  # don't care about missing gsim in the files
+                pass
 
     first_row = 0
     I = len(imts)
-    shape_val = num_gmfs*N
+    shape_val = num_gmfs * N
     gmv_data_dt = np.dtype(
         [('rlzi', U16), ('sid', U32), ('eid', U64), ('gmv', (F32, (I,)))])
 
@@ -293,7 +287,7 @@ def main(cfg_file):
             gmf_gmpe = gsim_list[0]
             for d in range(len(inter_residual['rates_inter'])):
                 for e in range(len(intra_residual['rates_intra'])):
-                    np.random.seed(seed+a+d*1000+e*10000)
+                    np.random.seed(seed + a + d * 1000 + e * 10000)
                     aleatoryIntraMatrices = np.random.choice(
                         range(num_intra_matrices), realizations_intra,
                         replace=False)
@@ -306,20 +300,18 @@ def main(cfg_file):
                     rate = (gmfs_median[index_gmf]['rate'] *
                             inter_residual['rates_inter'][d] *
                             intra_residual['rates_intra'][e])
-                    for c in range(len(imts)):
+                    for imti, imt in enumerate(imts):
                         gmf_total_part = {}
-                        gmv = gmfs_median[index_gmf][gmf_gmpe][c]
-                        gmf_total_part[gmf_gmpe, imts[c], d, e] = np.exp(
+                        gmv = gmfs_median[index_gmf][gmf_gmpe][imti]
+                        gmf_total_part[gmf_gmpe, imt, d, e] = np.exp(
                             np.log(gmv) +
-                            inter_residual[
-                                str(gmf_gmpe) + ', ' + str(imts[c])][d] +
-                            np.array(zip_intra[str(gsim_list[al]) +
-                                               ', ' + str(imts[c])][
+                            inter_residual[gmf_gmpe, imt][d] +
+                            np.array(zip_intra[gmf_gmpe, imt][
                                                    2 + aleatoryIntraMatrices[e]
                                                ]).reshape((-1, 1)))
                         gmf_to_txt = np.c_[
                             gmf_to_txt,
-                            gmf_total_part[gmf_gmpe, imts[c], d, e].flatten()]
+                            gmf_total_part[gmf_gmpe, imt, d, e].flatten()]
 
                     ab.writerow([eid, rate])
                     dset3['rlzi', first_row:first_row + N] = gmf_to_txt[:, 0]
@@ -330,5 +322,8 @@ def main(cfg_file):
     f.close()
 
 
+main.arg('cfg_file', 'configuration file')
+
+
 if __name__ == '__main__':
-    main(sys.argv[1])
+    main.callfunc()
