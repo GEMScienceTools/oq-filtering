@@ -41,41 +41,21 @@ U64 = np.uint64
 F32 = np.float32
 
 
-@sap.Script
-def main(cfg_file):
-    cfg = configparser.ConfigParser()
-    cfg.read(cfg_file)
-    gmf_file = cfg['input']['gmf_file']
-    gmf_file_gmpe_rate = cfg['input']['gmf_file_gmpe_rate']
-    job_ini = cfg['input']['job_ini']
-
+def read_input_gmf(gmf_file, gmf_file_gmpe_rate):
     df_gmf = pd.read_csv(gmf_file, header=0)
     df_gmf_gmpe_rate = pd.read_csv(gmf_file_gmpe_rate, header=0)
-
     gmfs_median = []
     for event in range(len(df_gmf_gmpe_rate)):
         gmf_median = {}  # gmpe -> [gmv_PGA, gmv_SA(0.3)]
         gmf_median['rate'] = df_gmf_gmpe_rate['rate'][event]
-        gmv = df_gmf['gmv_PGA'].values
         gmf_median[df_gmf_gmpe_rate['gmpe'][event]] = (
             [df_gmf[df_gmf.event_id == event][['gmv_PGA']].values,
              df_gmf[df_gmf.event_id == event][['gmv_SA(0.3)']].values])
         gmfs_median.append(gmf_median)
+    return gmfs_median
 
-    # ## Calculate Total Standard Deviation
 
-    imts = [PGA(), SA(0.3)]
-    # inter and intra values correspond to intra/inter ratio of 1.75
-    # These values are used only if the GMPE is defined for TOTAL st dev
-    vs30 = 180
-
-    oq_param = get_oqparam(job_ini)
-
-    haz_sitecol = get_site_collection(oq_param)
-    sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
-    gsimlt = get_gsim_lt(oq_param)
-    gsim_list = [br.uncertainty for br in gsimlt.branches]
-
+def calculate_total_std(gsim_list, imts, vs30):
     std_total = {}
     std_inter = {}
     std_intra = {}
@@ -86,7 +66,6 @@ def main(cfg_file):
         rctx.mag = 5
         rctx.rake = 0
         rctx.hypo_depth = 0
-
         dctx = DistancesContext()
         dctx.rjb = np.copy(np.array([1]))  # I do not care about the distance
         dctx.rrup = np.copy(np.array([1]))  # I do not care about the distance
@@ -101,120 +80,74 @@ def main(cfg_file):
                 np.sqrt(gm_stddev_inter[0] ** 2 + gm_stddev_intra[0] ** 2))
             std_inter[gsim, imt] = gm_stddev_inter[0]
             std_intra[gsim, imt] = gm_stddev_intra[0]
+    return (std_total, std_inter, std_intra)
 
-    # ## Inter-event residuals
 
-    realizations_inter = 5
-
+def calc_inter_residuals(mean_shift_inter_residuals, realizations_inter,
+                         std_inter):
     # Importance Sampling
-    mean_shift = 0.75
-
     rates_inter = np.array([1./realizations_inter]*realizations_inter)
     cumulative_rates = np.cumsum(rates_inter)-rates_inter/2
     distr_values = scipy.stats.norm.ppf(
-        cumulative_rates, loc=mean_shift, scale=1)
+        cumulative_rates, loc=mean_shift_inter_residuals, scale=1)
     p_distr_values = scipy.stats.norm.pdf(distr_values, loc=0, scale=1)
     q_distr_values = scipy.stats.norm.pdf(
-        distr_values, loc=mean_shift, scale=1)
+        distr_values, loc=mean_shift_inter_residuals, scale=1)
     weights = (p_distr_values/q_distr_values)
     rates_inter = weights / sum(weights)
-
     # Calculate distribution mean - needs to be approximately zero
     np.mean(distr_values * rates_inter)
-
     # get std_inter values from gmpe
     gmpe_imt = list(std_inter)
     inter_residual = {}
-
-    # calculate inter_residual values
     for gmpe, imt in gmpe_imt:
         stddev_inter = [std_inter[gmpe, imt]]
         inter_residual[gmpe, imt] = stddev_inter * distr_values
-
     inter_residual['rates_inter'] = rates_inter
+    return inter_residual, gmpe_imt
 
-    # ## Intra-event residuals: upload values from csv files
 
-    realizations_intra = 5
-    # If No Correlation:
-    # mu = 0.0
-    # sigma = 1.0
-
-    # ### Intra-event residuals: No Correlation
-
-    # df_coords = pd.DataFrame({'lons': sites.lons, 'lats': sites.lats})
-    # intra_residual_no_coords = {}
-    # intra_residual = {}
-    # intra_residual['rates_intra'] = rates_intra
-
-    # for x in range(len(gmpe_imt)):
-    #    df_part = np.random.normal(mu, sigma, len(sites)*
-    # realizations_intra).reshape((len(sites),realizations_intra))
-    #
-    #    stddev_intra = [std_intra[gmpe_imt[x]]]
-    #    intra_residual_no_coords[str(gmpe_imt[x][0])+', '+str(gmpe_imt[x][1])] =
-    # stddev_intra * df_part
-    #    intra_residual[str(gmpe_imt[x][0])+', '+str(gmpe_imt[x][1])] =
-    # np.concatenate([df_coords.values,intra_residual_no_coords
-    # [str(gmpe_imt[x][0])+', '+str(gmpe_imt[x][1])]], axis=1)
-
-    # ### Intra-event residuals: Spatial and Cross Correlation
-
-    intra_files = cfg['input']['intra_files'].split()
-
-    df_0 = pd.read_csv(intra_files[0], nrows=2, header=None)
+def calc_intra_residuals(sp_correlation, realizations_intra, intra_files_name,
+                         intra_files, sites, gmpe_imt, std_intra):
+    # Only works when rates are equal (Not applicable for IS)!!!
+    intra_residual = {}
+    intra_residual['rates_intra'] = ([1. / realizations_intra]
+                                     * realizations_intra)
+    df_0 = pd.read_csv(intra_files[0], header=None)
     number_cols = len(df_0.columns)
-
+    num_intra_matrices = len(df_0.columns)-2
+    df_coords = pd.DataFrame({'lons': sites.lons, 'lats': sites.lats})
+    intra_residual_no_coords = {}
     # Find indeces of rows to extract from Matrices
-    df = pd.read_csv(intra_files[0], usecols=[0, 1], header=None)
-
-    coords_matrix = np.array(df)
+    coords_matrix = np.array(df_0.iloc[:, 0:2])
     exposure_coords = np.array(list(zip(*[sites.lons, sites.lats])))
     rows_to_extract = np.argmin(
         cdist(coords_matrix, exposure_coords, 'sqeuclidean'), axis=0)
-
-    # Multiply entire table (1000matrices) by
-    # Only works when rates are equal (Not applicable for IS)!!!
-
-    intra_residual = {}
-    # If rates are all equal
-    rates_intra = [1. / realizations_intra] * realizations_intra
-    intra_residual['rates_intra'] = rates_intra
-
-    # np.random.seed(99)
-    # cols = np.random.choice(range(2,number_cols),
-    # realizations_intra, replace=False)
     cols = np.array(range(2, number_cols))
-    # intra_residual['rates_intra']
 
-    intra_residual_no_coords = {}
-
-    df_coords = pd.DataFrame({'lons': sites.lons, 'lats': sites.lats})
-    for (gmpe, imt), file_name in zip(gmpe_imt, intra_files):
-        df = pd.read_csv(file_name, usecols=cols, header=None)
-        df_part = df.loc[rows_to_extract].reset_index(drop=True)
+    for gmpe, imt in gmpe_imt:
+        if sp_correlation == 'True':
+            file_name = intra_files_name + str(imt) + '.csv'
+            df = pd.read_csv(file_name, usecols=cols, header=None)
+            df_part = (df.loc[rows_to_extract].reset_index(drop=True)).values
+        else:  # Intra-event residuals: No Correlation
+            mu = 0.0
+            sigma = 1.0
+            df_part = np.random.normal(mu, sigma, len(sites) *
+                                       num_intra_matrices).reshape((len(sites), num_intra_matrices))
 
         # get std_intra values from gmpe
         stddev_intra = [std_intra[gmpe, imt]]
-        intra_residual_no_coords[gmpe, imt] = stddev_intra * df_part.values
-
+        intra_residual_no_coords[gmpe, imt] = stddev_intra * df_part
         intra_residual[gmpe, imt] = (
                 np.concatenate(
                     [df_coords.values,
                      intra_residual_no_coords[gmpe, imt]], axis=1))
 
-    # intra_residual
+    return intra_residual, num_intra_matrices
 
-    # Sum median with residuals and save .csv file
-    # For ruptures after filtering
-    csv_rate_gmf_file = cfg['output']['csv_rate_gmf_file']
-    seed = 1
 
-    N = len(sites)
-    num_gmfs = (
-        len(gmfs_median) * len(inter_residual['rates_inter']) *
-        len(intra_residual['rates_intra']))
-
+def create_indices(N, num_gmfs, f, sites):
     lst_ = []
     for sid in range(N):
         list_a = []
@@ -223,18 +156,14 @@ def main(cfg_file):
         a = np.array(list_a, np.dtype([('start', U32), ('stop', U32)]))
         lst_.append(a)
     data = np.array(lst_)
-
-    parent_hdf5 = f = hdf5new()
-    calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
-    logs.dbcmd('import_job', calc_id, 'event_based',
-               'eb_test_hdf5', 'ccosta', 'complete', None, datadir)
-
     dt = data[0].dtype
     dtype = h5py.special_dtype(vlen=dt)
     dset = f.create_dataset('gmf_data/indices', (len(sites),), dtype)
     for i, val in enumerate(data):
         dset[i] = val
 
+
+def create_gmdata(f, num_gmfs):
     gmdata_dt = np.dtype(
         [('PGA', F32), ('SA(0.3)', F32), ('events', U32), ('nbytes', U32)])
     dset1 = f.create_dataset('gmdata', (1,), dtype=gmdata_dt)
@@ -242,8 +171,8 @@ def main(cfg_file):
     dset1['PGA'] = 0.03
     dset1['SA(0.3)'] = 0.031
 
-    cinfo = source.CompositionInfo.fake(gsimlt)
 
+def create_events(f, num_gmfs):
     events_dt = np.dtype([('eid', U64), ('rup_id', U32), ('grp_id', U16),
                           ('year', U32), ('ses', U32), ('sample', U32)])
     dset2 = f.create_dataset('events', (num_gmfs,), dtype=events_dt)
@@ -252,18 +181,8 @@ def main(cfg_file):
     dset2['rup_id'] = np.ones(num_gmfs)
     dset2['year'] = np.ones(num_gmfs)
 
-    f['csm_info'] = cinfo
-    f['sitecol'] = sites
-    f['oqparam'] = oq_param
 
-    row1_rate = 'event_id,rate' + '\n'
-    with open(csv_rate_gmf_file, 'w') as text_fi_2:
-        text_fi_2.write(row1_rate)
-
-    N = len(sites)
-    eid = -1
-    num_intra_matrices = len(df_0.columns)-2
-
+def create_zip_intra(gsim_list, imts, intra_residual):
     zip_intra = {}
     for gsim in gsim_list:
         for imt in imts:
@@ -271,23 +190,69 @@ def main(cfg_file):
                 zip_intra[gsim, imt] = list(zip(*intra_residual[gsim, imt]))
             except Exception:  # don't care about missing gsim in the files
                 pass
+    return zip_intra
 
-    first_row = 0
-    I = len(imts)
-    shape_val = num_gmfs * N
+
+def read_config_file(cfg):
+    gmf_file = cfg['input']['gmf_file']
+    gmf_file_gmpe_rate = cfg['input']['gmf_file_gmpe_rate']
+    job_ini = cfg['input']['job_ini']
+    oq_param = get_oqparam(job_ini)
+    haz_sitecol = get_site_collection(oq_param)
+    sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
+    gsimlt = get_gsim_lt(oq_param)
+    gsim_list = [br.uncertainty for br in gsimlt.branches]
+    cinfo = source.CompositionInfo.fake(gsimlt)
+    mean_shift_inter_residuals = float(
+                    cfg['input']['mean_shift_inter_residuals'])
+    realizations_inter = int(cfg['input']['realizations_inter'])
+    realizations_intra = int(cfg['input']['realizations_intra'])
+    intra_files_name = cfg['input']['intra_files_name']
+    intra_files = cfg['input']['intra_files'].split()
+    csv_rate_gmf_file = cfg['output']['csv_rate_gmf_file']
+    seed = int(cfg['input']['seed'])
+    return (gmf_file, gmf_file_gmpe_rate, sites, gsim_list, cinfo, oq_param,
+            mean_shift_inter_residuals, realizations_inter, realizations_intra,
+            intra_files_name, intra_files, csv_rate_gmf_file, seed)
+
+
+def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
+    parent_hdf5 = f = hdf5new()
+    calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
+    # logs.dbcmd('import_job', calc_id, 'event_based',
+    #           'eb_test_hdf5', '/C/Users/Catarina Costa/oqdata/',
+    #           'complete', None, datadir)
+    create_indices(N, num_gmfs, f, sites)
+    create_gmdata(f, num_gmfs)
+    create_events(f, num_gmfs)
+    f['csm_info'] = cinfo
+    f['sitecol'] = sites
+    f['oqparam'] = oq_param
+    return f
+
+
+def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
+                   inter_residual, intra_residual, seed, num_intra_matrices,
+                   realizations_intra, N, imts, zip_intra, f):
+    row1_rate = 'event_id,rate' + '\n'
+    with open(csv_rate_gmf_file, 'w') as text_fi_2:
+        text_fi_2.write(row1_rate)
     gmv_data_dt = np.dtype(
-        [('rlzi', U16), ('sid', U32), ('eid', U64), ('gmv', (F32, (I,)))])
-
+        [('rlzi', U16), ('sid', U32), ('eid', U64),
+         ('gmv', (F32, (len(imts),)))])
+    shape_val = num_gmfs * N
     dset3 = f.create_dataset(
         'gmf_data/data', (shape_val,), dtype=gmv_data_dt, chunks=True)
+
+    eid = -1
+    first_row = 0
     with open(csv_rate_gmf_file, 'a') as text_fi_2:
         ab = csv.writer(text_fi_2, delimiter=',')
-        for a in range(len(gmfs_median)):
-            index_gmf = a
+        for index_gmf in range(len(gmfs_median)):
             gmf_gmpe = gsim_list[0]
             for d in range(len(inter_residual['rates_inter'])):
                 for e in range(len(intra_residual['rates_intra'])):
-                    np.random.seed(seed + a + d * 1000 + e * 10000)
+                    np.random.seed(seed + index_gmf + d * 1000 + e * 10000)
                     aleatoryIntraMatrices = np.random.choice(
                         range(num_intra_matrices), realizations_intra,
                         replace=False)
@@ -319,6 +284,44 @@ def main(cfg_file):
                     dset3['eid', first_row:first_row + N] = gmf_to_txt[:, 2]
                     dset3['gmv', first_row:first_row + N] = gmf_to_txt[:, 3:5]
                     first_row = first_row + N
+
+
+@sap.Script
+def main(cfg_file):
+    cfg = configparser.ConfigParser()
+    cfg.read(cfg_file)
+    (gmf_file, gmf_file_gmpe_rate, sites, gsim_list, cinfo, oq_param,
+        mean_shift_inter_residuals, realizations_inter, realizations_intra,
+        intra_files_name, intra_files, csv_rate_gmf_file,
+        seed) = read_config_file(cfg)
+
+    gmfs_median = read_input_gmf(gmf_file, gmf_file_gmpe_rate)
+
+    imts = [PGA(), SA(0.3)]
+    vs30 = 180
+    (std_total, std_inter, std_intra) = calculate_total_std(gsim_list, imts, vs30)
+
+    inter_residual, gmpe_imt = calc_inter_residuals(mean_shift_inter_residuals,
+                                                    realizations_inter, std_inter)
+
+    sp_correlation = cfg['input']['sp_correlation']
+    intra_residual, num_intra_matrices = calc_intra_residuals(sp_correlation,
+        realizations_intra, intra_files_name, intra_files, sites, gmpe_imt, std_intra)
+
+    N = len(sites)
+    num_gmfs = (
+        len(gmfs_median) * len(inter_residual['rates_inter']) *
+        len(intra_residual['rates_intra']))
+
+    f = create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param)
+
+    zip_intra = create_zip_intra(gsim_list, imts, intra_residual)
+
+    save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
+                   inter_residual, intra_residual, seed,
+                   num_intra_matrices, realizations_intra, N,
+                   imts, zip_intra, f)
+
     f.close()
 
 
