@@ -219,9 +219,9 @@ def read_config_file(cfg):
 def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
     parent_hdf5 = f = hdf5new()
     calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
-    # logs.dbcmd('import_job', calc_id, 'event_based',
-    #           'eb_test_hdf5', '/C/Users/Catarina Costa/oqdata/',
-    #           'complete', None, datadir)
+    logs.dbcmd('import_job', calc_id, 'event_based',
+               'eb_test_hdf5', '/C/Users/Catarina Costa/oqdata/',
+               'complete', None, datadir)
     create_indices(N, num_gmfs, f, sites)
     create_gmdata(f, num_gmfs)
     create_events(f, num_gmfs)
@@ -249,7 +249,8 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
     with open(csv_rate_gmf_file, 'a') as text_fi_2:
         ab = csv.writer(text_fi_2, delimiter=',')
         for index_gmf in range(len(gmfs_median)):
-            gmf_gmpe = gsim_list[0]
+            keys_gmfs = gmfs_median[index_gmf].keys()
+            gmf_gmpe = [i for i in keys_gmfs if i in gsim_list][0]
             for d in range(len(inter_residual['rates_inter'])):
                 for e in range(len(intra_residual['rates_intra'])):
                     np.random.seed(seed + index_gmf + d * 1000 + e * 10000)
