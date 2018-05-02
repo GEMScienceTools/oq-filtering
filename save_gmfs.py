@@ -31,7 +31,7 @@ from openquake.hazardlib.gsim.base import (
     RuptureContext, SitesContext, DistancesContext)
 from openquake.commonlib.readinput import (
     get_oqparam, get_site_collection, get_gsim_lt,
-    get_sitecol_assetcol)
+    get_sitecol_assetcol, get_risk_model)
 from openquake.hazardlib import const
 from openquake.commonlib import logs
 from openquake.commonlib import source
@@ -165,9 +165,9 @@ def create_indices(N, num_gmfs, f, sites):
         dset[i] = val
 
 
-def create_gmdata(f, num_gmfs):
-    gmdata_dt = np.dtype(
-        [('PGA', F32), ('SA(0.3)', F32), ('events', U32), ('nbytes', U32)])
+def create_gmdata(f, num_gmfs, imts):
+    dtlist = [(imt, F32) for imt in imts]
+    gmdata_dt = np.dtype(dtlist + [('events', U32), ('nbytes', U32)])
     dset1 = f.create_dataset('gmdata', (1,), dtype=gmdata_dt)
     dset1['events'] = int(num_gmfs)
     dset1['PGA'] = 0.03
@@ -200,6 +200,7 @@ def read_config_file(cfg):
     gmf_file_gmpe_rate = cfg['input']['gmf_file_gmpe_rate']
     job_ini = cfg['input']['job_ini']
     oq_param = get_oqparam(job_ini)
+    get_risk_model(oq_param)  # read risk functions and set imtls
     haz_sitecol = get_site_collection(oq_param)
     sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
     gsimlt = get_gsim_lt(oq_param)
@@ -225,7 +226,7 @@ def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
                'eb_test_hdf5', getpass.getuser(),
                'complete', None, datadir)
     create_indices(N, num_gmfs, f, sites)
-    create_gmdata(f, num_gmfs)
+    create_gmdata(f, num_gmfs, oq_param.imtls)
     create_events(f, num_gmfs)
     f['csm_info'] = cinfo
     f['sitecol'] = sites
@@ -302,14 +303,16 @@ def main(cfg_file):
 
     imts = [PGA(), SA(0.3)]
     vs30 = 180
-    (std_total, std_inter, std_intra) = calculate_total_std(gsim_list, imts, vs30)
+    (std_total, std_inter, std_intra) = calculate_total_std(
+        gsim_list, imts, vs30)
 
-    inter_residual, gmpe_imt = calc_inter_residuals(mean_shift_inter_residuals,
-                                                    realizations_inter, std_inter)
+    inter_residual, gmpe_imt = calc_inter_residuals(
+        mean_shift_inter_residuals, realizations_inter, std_inter)
 
     sp_correlation = cfg['input']['sp_correlation']
-    intra_residual, num_intra_matrices = calc_intra_residuals(sp_correlation,
-        realizations_intra, intra_files_name, intra_files, sites, gmpe_imt, std_intra)
+    intra_residual, num_intra_matrices = calc_intra_residuals(
+        sp_correlation, realizations_intra, intra_files_name, intra_files,
+        sites, gmpe_imt, std_intra)
 
     N = len(sites)
     num_gmfs = (
@@ -326,6 +329,7 @@ def main(cfg_file):
                    imts, zip_intra, f)
 
     f.close()
+    print('Saved', f.name)
 
 
 main.arg('cfg_file', 'configuration file')
