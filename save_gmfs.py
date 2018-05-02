@@ -16,6 +16,7 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with OpenQuake.  If not, see <http://www.gnu.org/licenses/>.
 import csv
+import getpass
 import configparser
 import pandas as pd
 import numpy as np
@@ -133,8 +134,9 @@ def calc_intra_residuals(sp_correlation, realizations_intra, intra_files_name,
         else:  # Intra-event residuals: No Correlation
             mu = 0.0
             sigma = 1.0
-            df_part = np.random.normal(mu, sigma, len(sites) *
-                                       num_intra_matrices).reshape((len(sites), num_intra_matrices))
+            df_part = np.random.normal(
+                mu, sigma, len(sites) *
+                num_intra_matrices).reshape((len(sites), num_intra_matrices))
 
         # get std_intra values from gmpe
         stddev_intra = [std_intra[gmpe, imt]]
@@ -220,7 +222,7 @@ def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
     parent_hdf5 = f = hdf5new()
     calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
     logs.dbcmd('import_job', calc_id, 'event_based',
-               'eb_test_hdf5', '/C/Users/Catarina Costa/oqdata/',
+               'eb_test_hdf5', getpass.getuser(),
                'complete', None, datadir)
     create_indices(N, num_gmfs, f, sites)
     create_gmdata(f, num_gmfs)
