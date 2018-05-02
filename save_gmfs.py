@@ -220,7 +220,7 @@ def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
     parent_hdf5 = f = hdf5new()
     calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
     logs.dbcmd('import_job', calc_id, 'event_based',
-               'eb_test_hdf5', '/C/Users/Catarina Costa/oqdata/',
+               'eb_test_hdf5', 'Catarina Costa',
                'complete', None, datadir)
     create_indices(N, num_gmfs, f, sites)
     create_gmdata(f, num_gmfs)
