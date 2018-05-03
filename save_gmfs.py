@@ -149,19 +149,22 @@ def calc_intra_residuals(sp_correlation, realizations_intra, intra_files_name,
     return intra_residual, num_intra_matrices
 
 
-def create_indices(N, num_gmfs, f, sites):
+def create_indices(N, f, sites, indices):
     lst_ = []
-    for sid in range(N):
-        list_a = []
-        for eid in range(int(num_gmfs)):
-            list_a.append((sid + eid * N, sid + eid * N + 1))
-        a = np.array(list_a, np.dtype([('start', U32), ('stop', U32)]))
+    for i in range(N):
+        indices_np = np.array(indices[i])
+        ind = np.where(np.diff(indices_np) != 1)
+        ind_ini = np.concatenate([[0], ind[0]+1])
+        ind_fin = np.concatenate([ind[0], [len(indices_np)-1]])
+        num_ini = indices_np[ind_ini]
+        num_fin = indices_np[ind_fin]+1
+        a = np.array(list(zip(num_ini, num_fin)),
+                     np.dtype([('start', U32), ('stop', U32)]))
         lst_.append(a)
-    data = np.array(lst_)
-    dt = data[0].dtype
+    dt = lst_[0].dtype
     dtype = h5py.special_dtype(vlen=dt)
     dset = f.create_dataset('gmf_data/indices', (len(sites),), dtype)
-    for i, val in enumerate(data):
+    for i, val in enumerate(lst_):
         dset[i] = val
 
 
@@ -214,29 +217,30 @@ def read_config_file(cfg):
     intra_files = cfg['input']['intra_files'].split()
     csv_rate_gmf_file = cfg['output']['csv_rate_gmf_file']
     seed = int(cfg['input']['seed'])
+    limit_gmv = float(cfg['input']['limit_gmv'])
     return (gmf_file, gmf_file_gmpe_rate, sites, gsim_list, cinfo, oq_param,
             mean_shift_inter_residuals, realizations_inter, realizations_intra,
-            intra_files_name, intra_files, csv_rate_gmf_file, seed)
+            intra_files_name, intra_files, csv_rate_gmf_file, seed, limit_gmv)
 
 
 def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
     parent_hdf5 = f = hdf5new()
     calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
-    logs.dbcmd('import_job', calc_id, 'event_based',
-               'eb_test_hdf5', getpass.getuser(),
-               'complete', None, datadir)
-    create_indices(N, num_gmfs, f, sites)
+    # logs.dbcmd('import_job', calc_id, 'event_based',
+               # 'eb_test_hdf5', getpass.getuser(),
+               # 'complete', None, datadir)
+    # create_indices(N, num_gmfs, f, sites)
     create_gmdata(f, num_gmfs, oq_param.imtls)
     create_events(f, num_gmfs)
     f['csm_info'] = cinfo
     f['sitecol'] = sites
     f['oqparam'] = oq_param
-    return f
+    return f, calc_id
 
 
 def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
                    inter_residual, intra_residual, seed, num_intra_matrices,
-                   realizations_intra, N, imts, zip_intra, f):
+                   realizations_intra, N, imts, zip_intra, f, limit_gmv):
     row1_rate = 'event_id,rate' + '\n'
     with open(csv_rate_gmf_file, 'w') as text_fi_2:
         text_fi_2.write(row1_rate)
@@ -249,6 +253,8 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
 
     eid = -1
     first_row = 0
+    indices = [[] for _ in range(N)]
+
     with open(csv_rate_gmf_file, 'a') as text_fi_2:
         ab = csv.writer(text_fi_2, delimiter=',')
         for index_gmf in range(len(gmfs_median)):
@@ -283,11 +289,23 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
                             gmf_total_part[gmf_gmpe, imt, d, e].flatten()]
 
                     ab.writerow([eid, rate])
-                    dset3['rlzi', first_row:first_row + N] = gmf_to_txt[:, 0]
-                    dset3['sid', first_row:first_row + N] = gmf_to_txt[:, 1]
-                    dset3['eid', first_row:first_row + N] = gmf_to_txt[:, 2]
-                    dset3['gmv', first_row:first_row + N] = gmf_to_txt[:, 3:5]
-                    first_row = first_row + N
+                    # Filter rows with SA smaller than limit
+                    gmf_filtered = gmf_to_txt[gmf_to_txt[:, -1] > limit_gmv]
+                    N_filter = len(gmf_filtered)
+                    dset3['rlzi', first_row:first_row +
+                          N_filter] = gmf_filtered[:, 0]
+                    dset3['sid', first_row:first_row +
+                          N_filter] = gmf_filtered[:, 1]
+                    dset3['eid', first_row:first_row +
+                          N_filter] = gmf_filtered[:, 2]
+                    dset3['gmv', first_row:first_row +
+                          N_filter] = gmf_filtered[:, 3:3 + len(imts)]
+                    first_row = first_row + N_filter
+
+                    for sid in gmf_filtered[:, 1]:
+                        indices[int(sid)].append(eid)
+
+    return indices
 
 
 @sap.Script
@@ -297,7 +315,7 @@ def main(cfg_file):
     (gmf_file, gmf_file_gmpe_rate, sites, gsim_list, cinfo, oq_param,
         mean_shift_inter_residuals, realizations_inter, realizations_intra,
         intra_files_name, intra_files, csv_rate_gmf_file,
-        seed) = read_config_file(cfg)
+        seed, limit_gmv) = read_config_file(cfg)
 
     gmfs_median = read_input_gmf(gmf_file, gmf_file_gmpe_rate)
 
@@ -313,23 +331,23 @@ def main(cfg_file):
     intra_residual, num_intra_matrices = calc_intra_residuals(
         sp_correlation, realizations_intra, intra_files_name, intra_files,
         sites, gmpe_imt, std_intra)
-
     N = len(sites)
     num_gmfs = (
         len(gmfs_median) * len(inter_residual['rates_inter']) *
         len(intra_residual['rates_intra']))
-
-    f = create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param)
+    f, calc_id = create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param)
 
     zip_intra = create_zip_intra(gsim_list, imts, intra_residual)
 
-    save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
-                   inter_residual, intra_residual, seed,
-                   num_intra_matrices, realizations_intra, N,
-                   imts, zip_intra, f)
+    indices = save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median,
+                             gsim_list, inter_residual, intra_residual,
+                             seed, num_intra_matrices, realizations_intra,
+                             N, imts, zip_intra, f, limit_gmv)
+
+    create_indices(N, f, sites, indices)
 
     f.close()
-    print('Saved', f.name)
+    print('Saved', calc_id)
 
 
 main.arg('cfg_file', 'configuration file')
