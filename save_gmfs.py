@@ -22,10 +22,11 @@ import pandas as pd
 import numpy as np
 import scipy
 import h5py
+from datetime import datetime
 from scipy.spatial.distance import cdist
 from itertools import chain
 
-from openquake.baselib.datastore import hdf5new, extract_calc_id_datadir
+from openquake.baselib.datastore import DataStore, extract_calc_id_datadir
 from openquake.baselib import sap
 from openquake.hazardlib.imt import PGA, SA
 from openquake.hazardlib.gsim.base import (
@@ -36,6 +37,8 @@ from openquake.commonlib.readinput import (
 from openquake.hazardlib import const
 from openquake.commonlib import logs
 from openquake.commonlib import source
+from openquake.engine.engine import job_from_file
+from openquake.server import dbserver
 
 U16 = np.uint16
 U32 = np.uint32
@@ -150,18 +153,29 @@ def calc_intra_residuals(sp_correlation, realizations_intra, intra_files_name,
     return intra_residual, num_intra_matrices
 
 
-def create_indices(N, f, sites, indices, num_sid_per_gmf):
+def create_indices(N, f, num_gmfs, limit_gmv, sites, indices, num_sid_per_gmf):
     lst_ = []
+    cum_num_sid_per_gmf = np.insert(np.cumsum(num_sid_per_gmf),0,0)
     for sid in range(N):
-        num_ini = []
-        indices_until_sid = indices[0:sid]
-        indices_until_sid_flat = list(chain.from_iterable(indices_until_sid))
-        for rup_ind in np.array(indices[sid]):
-            value = indices_until_sid_flat.count(rup_ind)
-            num_ini.append(sum(num_sid_per_gmf[0:rup_ind]) + value)
-        num_fin = [x+1 for x in num_ini]
-        a = np.array(list(zip(num_ini, num_fin)),
-                     np.dtype([('start', U32), ('stop', U32)]))
+        if limit_gmv == 0:
+            list_a = []
+            for eid in range(int(num_gmfs)):
+                list_a.append((sid + eid * N, sid + eid * N + 1))
+            a = np.array(list_a, np.dtype([('start', U32), ('stop', U32)]))
+        else:
+            indices_until_sid = [*map(int, chain.from_iterable(indices[0:sid]))]
+            if len(indices_until_sid) == 0:
+                values = [0]*(indices[sid][-1]+1)
+            else:
+                values = np.bincount(indices_until_sid)
+                while len(values) < indices[sid][-1]+1:
+                    values = np.append(values,0)
+            num_ini = list(cum_num_sid_per_gmf[rup_ind]
+                            + values[rup_ind]
+                            for rup_ind in indices[sid])
+            num_fin = [x+1 for x in num_ini]
+            a = np.array(list(zip(num_ini, num_fin)),
+                         np.dtype([('start', U32), ('stop', U32)]))
         lst_.append(a)
     dt = lst_[0].dtype
     dtype = h5py.special_dtype(vlen=dt)
@@ -226,11 +240,9 @@ def read_config_file(cfg):
 
 
 def create_parent_hdf5(N, num_gmfs, sites, cinfo, oq_param):
-    parent_hdf5 = f = hdf5new()
-    calc_id, datadir = extract_calc_id_datadir(parent_hdf5.path)
-    logs.dbcmd('import_job', calc_id, 'event_based',
-               'eb_test_hdf5', getpass.getuser(),
-               'complete', None, datadir)
+    ini = oq_param.inputs['job_ini']
+    calc_id, _ = job_from_file(ini, getpass.getuser())
+    f = DataStore(calc_id).hdf5
     create_gmdata(f, num_gmfs, oq_param.imtls)
     create_events(f, num_gmfs)
     f['csm_info'] = cinfo
@@ -290,7 +302,14 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
 
                     ab.writerow([eid, rate])
                     # Filter rows with SA smaller than limit
-                    gmf_filtered = gmf_to_txt[gmf_to_txt[:, -1] > limit_gmv]
+                    if limit_gmv == 0:
+                        gmf_filtered = gmf_to_txt
+
+                    else:
+                        gmf_filtered = gmf_to_txt[gmf_to_txt[:, -1] > limit_gmv]
+                        for sid in gmf_filtered[:, 1]:
+                            indices[int(sid)].append(eid)
+                        
                     N_filter = len(gmf_filtered)
                     dset3['rlzi', first_row:first_row +
                           N_filter] = gmf_filtered[:, 0]
@@ -302,24 +321,23 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
                           N_filter] = gmf_filtered[:, 3:3 + len(imts)]
                     first_row = first_row + N_filter
 
-                    for sid in gmf_filtered[:, 1]:
-                        indices[int(sid)].append(eid)
                     num_sid_per_gmf.append(len(gmf_filtered[:, 1]))
+                        
     dset3.resize((sum(num_sid_per_gmf),))
     return indices, num_sid_per_gmf
 
 
 @sap.Script
 def main(cfg_file):
+    dbserver.ensure_on()
+    startTime = datetime.now()
     cfg = configparser.ConfigParser()
     cfg.read(cfg_file)
     (gmf_file, gmf_file_gmpe_rate, sites, gsim_list, cinfo, oq_param,
         mean_shift_inter_residuals, realizations_inter, realizations_intra,
         intra_files_name, intra_files, csv_rate_gmf_file,
         seed, limit_gmv) = read_config_file(cfg)
-
     gmfs_median = read_input_gmf(gmf_file, gmf_file_gmpe_rate)
-
     imts = [PGA(), SA(0.3)]
     vs30 = 180
     (std_total, std_inter, std_intra) = calculate_total_std(
@@ -341,16 +359,16 @@ def main(cfg_file):
     zip_intra = create_zip_intra(gsim_list, imts, intra_residual)
 
     indices, num_sid_per_gmf = save_hdf5_rate(
-                                num_gmfs, csv_rate_gmf_file, gmfs_median,
-                                gsim_list, inter_residual, intra_residual,
-                                seed, num_intra_matrices, realizations_intra,
-                                N, imts, zip_intra, f, limit_gmv)
+                               num_gmfs, csv_rate_gmf_file, gmfs_median,
+                               gsim_list, inter_residual, intra_residual,
+                               seed, num_intra_matrices, realizations_intra,
+                               N, imts, zip_intra, f, limit_gmv)
 
-    create_indices(N, f, sites, indices, num_sid_per_gmf)
+    create_indices(N, f, num_gmfs, limit_gmv, sites, indices, num_sid_per_gmf)
 
     f.close()
     print('Saved', calc_id)
-
+    print(datetime.now() - startTime)
 
 main.arg('cfg_file', 'configuration file')
 
