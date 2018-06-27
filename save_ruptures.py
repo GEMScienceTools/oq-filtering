@@ -230,7 +230,6 @@ def save_gmfs(gmf_file, gmf_file_gmpe_rate, gmfs_median, exposureCoords,
             gmf_total_part[gmf_gmpe, imts[c]] = gmv
             gmf_to_txt = np.c_[gmf_to_txt, gmf_total_part
                                [gmf_gmpe, imts[c]].flatten()]
-        #import pdb; pdb.set_trace()
 
         with open(gmf_file, 'a', newline='') as text_fi:
             aa = csv.writer(text_fi, delimiter=',')
