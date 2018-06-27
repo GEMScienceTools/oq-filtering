@@ -49,6 +49,8 @@ def read_input_gmf(gmf_file, gmf_file_gmpe_rate):
     df_gmf = pd.read_csv(gmf_file, header=0)
     df_gmf_gmpe_rate = pd.read_csv(gmf_file_gmpe_rate, header=0)
     gmfs_median = []
+    # If the file needs to be divided in two:
+    #for event in range(int(len(df_gmf_gmpe_rate)/2),len(df_gmf_gmpe_rate)):
     for event in range(len(df_gmf_gmpe_rate)):
         gmf_median = {}  # gmpe -> [gmv_PGA, gmv_SA(0.3)]
         gmf_median['rate'] = df_gmf_gmpe_rate['rate'][event]
@@ -269,7 +271,7 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
     first_row = 0
     indices = [[] for _ in range(N)]
     num_sid_per_gmf = []
-    with open(csv_rate_gmf_file, 'a') as text_fi_2:
+    with open(csv_rate_gmf_file, 'a', newline='') as text_fi_2:
         ab = csv.writer(text_fi_2, delimiter=',')
         for index_gmf in range(len(gmfs_median)):
             keys_gmfs = gmfs_median[index_gmf].keys()
