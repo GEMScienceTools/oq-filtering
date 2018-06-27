@@ -15,7 +15,7 @@ python:
 install:
   - git clone --depth=1 https://github.com/gem/oq-engine.git &&
     pip install -r oq-engine/requirements-py35-linux64.txt &&
-    pip install -e oq-engine
+    pip install -e oq-engine &&
     pip install pandas
 
 script:
