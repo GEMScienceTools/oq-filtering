@@ -1,0 +1,23 @@
+sudo: false
+
+notifications:
+  email:
+    - michele@openquake.org
+    - catarina.costa@globalquakemodel.org
+
+language: python
+
+cache: pip
+
+python:
+ - "3.5"
+
+install:
+  - git clone --depth=1 https://github.com/gem/oq-engine.git &&
+    pip install -r oq-engine/requirements-py35-linux64.txt &&
+    pip install -e oq-engine &&
+    pip install pandas
+
+script:
+  - python save_ruptures.py input_save_ruptures.cfg 
+  - python save_gmfs.py input_save_gmfs.cfg
