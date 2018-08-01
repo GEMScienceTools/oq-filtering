@@ -295,10 +295,10 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
                         gmf_total_part = {}
                         gmv = np.ma.log(gmfs_median[index_gmf][gmf_gmpe][imti])
                         gmf_total_part[gmf_gmpe, imt, d, e] = np.exp(
-                            gmv.filled(0) +
-                            inter_residual[gmf_gmpe, imt][d] +
-                            np.array(zip_intra[gmf_gmpe, imt][
-                              2 + aleatoryIntraMatrices[e]]).reshape((-1, 1)))
+                           gmv.filled(0) +
+                           inter_residual[gmf_gmpe, imt][d] +
+                           np.array(zip_intra[gmf_gmpe, imt][
+                             2 + aleatoryIntraMatrices[e]]).reshape((-1, 1)))
                         gmf_to_txt = np.c_[
                             gmf_to_txt,
                             gmf_total_part[gmf_gmpe, imt, d, e].flatten()]

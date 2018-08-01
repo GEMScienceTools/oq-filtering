@@ -2,9 +2,9 @@ import h5py
 import numpy as np
 
 # Input_file (hdf5)
-f = h5py.File('C:/Users/Catarina Costa/oqdata/calc_1765.hdf5', 'r')
+f = h5py.File('C:/Users/Catarina Costa/oqdata/calc_1794.hdf5', 'r')
 # Output file (csv)
-lossFile = 'C:/openquake/oq-cera/cr_120/agg_losses-all_1765.csv'
+lossFile = 'C:/openquake/oq-cera/test/agg_losses-all_1794.csv'
 
 the_data_var = f["losses_by_event"]
 the_data_array = the_data_var[:]
@@ -38,8 +38,8 @@ np.savetxt(lossFile, toSave, delimiter=",", comments='',
 
 # EVENT-BASED - save just rates and losses
 
-# inv_time = 1000000
-# losses = np.array(zip(*the_data_array)[2])
+# inv_time = 10000000
+# losses = np.array(list(zip(*the_data_array))[2])
 # losses_sort = np.sort(losses, axis=0)[::-1].flatten()
 # rates = np.arange(1.0, len(losses_sort)+1)/inv_time
 # toSave = np.column_stack((rates, losses_sort))

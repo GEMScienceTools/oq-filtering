@@ -267,6 +267,19 @@ def main(cfg_file):
         source_model2 = to_python(source_model_file2, conv1)
         source_model = source_model+source_model2
 
+    # Calculate total number of ruptures in the erf
+    # num_rup = 0
+    # rate_rup = []
+    # for a in range(len(source_model)):
+        # model_trt = source_model[a]
+        # for b in range(len(model_trt)):
+            # num_rup = num_rup + len(list(model_trt[b].iter_ruptures()))
+            # for rup in model_trt[b].iter_ruptures():
+                # rate_rup.append(rup.occurrence_rate)
+    # print(num_rup)
+    # print(sum(rate_rup))
+    # print(rate_rup[0:10])
+    
     # If exposure model is provided:
     haz_sitecol = get_site_collection(oq_param)
     sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)

@@ -21,3 +21,4 @@ install:
 script:
   - python save_ruptures.py input_save_ruptures.cfg 
   - python save_gmfs.py input_save_gmfs.cfg
+  - oq engine --run test/job_eb_cr_60_SJ_OQ.ini --hc -1
