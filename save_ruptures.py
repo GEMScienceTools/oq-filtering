@@ -53,17 +53,18 @@ def read_config_file(cfg):
     complex_mesh_spac = float(cfg['input']['complex_fault_mesh_spacing'])
     mfd_bin = float(cfg['input']['width_of_mfd_bin'])
     area_discre = float(cfg['input']['area_source_discretization'])
+    limit_mag = float(cfg['input']['limit_mag'])
 
     return (oq_param, source_model_file, matrixMagsMin, matrixMagsMax,
             matrixMagsStep, matrixDistsMin, matrixDistsMax,
             matrixDistsStep, limitIM, imt_filtering, trunc_level,
             im_filter, gmf_file, gmf_file_gmpe_rate, rup_mesh_spac,
-            complex_mesh_spac, mfd_bin, area_discre)
+            complex_mesh_spac, mfd_bin, area_discre, limit_mag)
 
 
 def build_gmpe_table(matrixMagsMin, matrixMagsMax, matrixMagsStep,
                      matrixDistsMin, matrixDistsMax, matrixDistsStep,
-                     imt_filtering, limitIM, gsim_list):
+                     imt_filtering, limitIM, gsim_list, limit_mag):
     # Define the magnitude range of interest, 5.0 - 9.0 every 0.1
     mags = np.arange(matrixMagsMin, matrixMagsMax, matrixMagsStep)
     # Define the distance range of interest, 0.0 - 300.0 every 1 km
@@ -108,6 +109,11 @@ def build_gmpe_table(matrixMagsMin, matrixMagsMax, matrixMagsStep,
         gm_table_final = gsim_tables[0]
     else:
         gm_table_final = np.maximum(gsim_tables[0], gsim_tables[1])
+    # This "if" excludes all ruptures above the limit magnitude
+    if limit_mag < matrixMagsMax:
+        indexMag = int((limit_mag - matrixMagsMin) / matrixMagsStep)
+        list_mag_to_exclude = np.arange(indexMag,len(mags))
+        gm_table_final[:, list_mag_to_exclude, 0] = 0.001
 
     gm_mask = gm_table_final >= limitIM
     GMPEmatrix = gm_mask[:, :, 0]
@@ -251,7 +257,7 @@ def main(cfg_file):
      matrixMagsStep, matrixDistsMin, matrixDistsMax,
      matrixDistsStep, limitIM, imt_filtering, trunc_level,
      im_filter, gmf_file, gmf_file_gmpe_rate, rup_mesh_spac,
-     complex_mesh_spac, mfd_bin, area_discre) = read_config_file(cfg)
+     complex_mesh_spac, mfd_bin, area_discre, limit_mag) = read_config_file(cfg)
 
     # Set up the source model configuration
     conv1 = SourceConverter(1.0,  # Investigation time
@@ -291,7 +297,7 @@ def main(cfg_file):
     GMPEmatrix = build_gmpe_table(matrixMagsMin, matrixMagsMax, matrixMagsStep,
                                   matrixDistsMin, matrixDistsMax,
                                   matrixDistsStep,
-                                  imt_filtering, limitIM, gsim_list)
+                                  imt_filtering, limitIM, gsim_list, limit_mag)
 
     # Calculate minimum distance between rupture and assets
     # Import exposure from .ini file
