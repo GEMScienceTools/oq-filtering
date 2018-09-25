@@ -265,7 +265,8 @@ def main(cfg_file):
      matrixMagsStep, matrixDistsMin, matrixDistsMax,
      matrixDistsStep, limitIM, imt_filtering, trunc_level,
      im_filter, gmf_file, gmf_file_gmpe_rate, rup_mesh_spac,
-     complex_mesh_spac, mfd_bin, area_discre, limit_mag) = read_config_file(cfg)
+     complex_mesh_spac, mfd_bin, area_discre, limit_max_mag,
+            limit_min_mag) = read_config_file(cfg)
 
     # Set up the source model configuration
     conv1 = SourceConverter(1.0,  # Investigation time
