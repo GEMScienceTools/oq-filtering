@@ -266,9 +266,9 @@ def save_hdf5_rate(num_gmfs, csv_rate_gmf_file, gmfs_median, gsim_list,
                             intra_residual['rates_intra'][e])
                     for imti, imt in enumerate(imts):
                         gmf_total_part = {}
-                        gmv = np.ma.log(gmfs_median[index_gmf][gmf_gmpe][imti])
+                        gmv = gmfs_median[index_gmf][gmf_gmpe][imti]
                         gmf_total_part[gmf_gmpe, imt, d, e] = np.exp(
-                           gmv.filled(0) +
+                           np.log(gmv) +
                            inter_residual[gmf_gmpe, imt][d] +
                            np.array(zip_intra[gmf_gmpe, imt][
                              2 + aleatoryIntraMatrices[e]]).reshape((-1, 1)))

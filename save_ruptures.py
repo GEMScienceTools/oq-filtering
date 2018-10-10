@@ -298,6 +298,8 @@ def main(cfg_file):
     # If exposure model is provided:
     haz_sitecol = get_site_collection(oq_param)
     sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
+    # print(list(sites)[0:10])
+    # np.savetxt('sites.csv',list(zip(sites.lons, sites.lats)))
     # If region coordinates are provided:
     # sites = get_site_collection(oq_param)
 
@@ -317,6 +319,7 @@ def main(cfg_file):
     recMeshExposure = RectangularMesh.from_points_list(exposurePoints)
     imts = ['PGA', 'SA(0.3)']
     cmake = ContextMaker(gsim_list)
+    
     filter1 = SourceFilter(sites, oq_param.maximum_distance)
 
     if im_filter == 'True':  # Here we consider the IM and the MaxDist filter
