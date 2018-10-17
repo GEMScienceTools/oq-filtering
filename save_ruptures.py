@@ -297,7 +297,7 @@ def main(cfg_file):
     
     # If exposure model is provided:
     haz_sitecol = get_site_collection(oq_param)
-    sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
+    sites, assets_by_site, _ = get_sitecol_assetcol(oq_param, haz_sitecol)
     # print(list(sites)[0:10])
     # np.savetxt('sites.csv',list(zip(sites.lons, sites.lats)))
     # If region coordinates are provided:

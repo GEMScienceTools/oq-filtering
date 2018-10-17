@@ -199,7 +199,7 @@ def read_config_file(cfg):
     oq_param = get_oqparam(job_ini)
     get_risk_model(oq_param)  # read risk functions and set imtls
     haz_sitecol = get_site_collection(oq_param)
-    sites, assets_by_site = get_sitecol_assetcol(oq_param, haz_sitecol)
+    sites, assets_by_site, _ = get_sitecol_assetcol(oq_param, haz_sitecol)
     gsimlt = get_gsim_lt(oq_param)
     gsim_list = [br.uncertainty for br in gsimlt.branches]
     cinfo = source.CompositionInfo.fake(gsimlt)
